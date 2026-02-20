@@ -1,0 +1,288 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2822
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\froman\fcharset0 Times-Roman;}
+{\colortbl;\red255\green255\blue255;\red0\green0\blue0;}
+{\*\expandedcolortbl;;\cssrgb\c0\c0\c0;}
+\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\deftab720
+\pard\pardeftab720\partightenfactor0
+
+\f0\fs24 \cf0 \expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 # Windows Command Extraction Criteria \'97 **v1.2**\
+\
+**Purpose:**\
+Define deterministic rules for extracting Windows command-line observables suitable for **EDR telemetry analysis and Sigma rule generation**.\
+\
+> **Core Principle:**\
+> **EDR observability overrides operational correctness.**\
+> Commands may be malformed, error-producing, oddly formatted, or operationally invalid and are still valid intelligence **if they are literal, single-line, and copy-pasteable as shown**.\
+\
+---\
+\
+## Global Rule (Fail-Closed)\
+\
+When uncertain \uc0\u8594  **EXCLUDE**\
+False positives are unacceptable.\
+\
+---\
+\
+## Valid Extraction Criteria\
+\
+A command is **VALID ONLY IF ALL CONDITIONS BELOW ARE MET**.\
+\
+---\
+\
+### 1. Literal Single-Line Presence\
+\
+* **Exists verbatim**: Exact text appears in the source, character-for-character\
+* **One physical line**: Entire command appears on a single physical line\
+* **Treat line breaks literally**: What appears as one line **is** one line; visually wrapped lines are multi-line\
+* **No reconstruction**: Not assembled from multiple locations, fields, or representations\
+* **No inference**: Not derived from narrative intent or behavior\
+\
+> **Context rule (explicit):**\
+> Surrounding prose, lists, captions, logs, tables, or narrative **DO NOT invalidate** a command.\
+> If the command text itself is literal, complete, and single-line, it is eligible regardless of how it is introduced (e.g., \'93such as,\'94 \'93including,\'94 discovery descriptions).\
+\
+---\
+\
+### 2. Windows Execution Component\
+\
+The evaluated command must start with **a recognized Windows execution component**.\
+\
+> **Recognition rule:**\
+> Quoting **does not affect recognition**.\
+> `"net.exe"` and `net.exe` are treated identically for first-token validation.\
+\
+#### Executables\
+\
+* `*.exe`, `*.bat`, `*.cmd`, `*.vbs`, `*.js`, `*.ps1`, etc.\
+\
+#### Shells\
+\
+* `cmd.exe`\
+* `powershell.exe`\
+\
+#### Built-in Commands\
+\
+Built-ins are **first-class execution components** and **do not require file extensions or paths**.\
+\
+* `dir`, `cd`, `copy`, `move`, `echo`, `mkdir`, `ren`, etc.\
+\
+#### Utilities / Binaries\
+\
+The following list is **illustrative, not exhaustive**:\
+\
+* `net`, `nltest`, `reg`, `wmic`, `schtasks`, `whoami`, `ipconfig`, `systeminfo`\
+* `certutil`, `bitsadmin`, `mshta`, `regsvr32`, `rundll32`\
+* `wscript`, `cscript`, `msiexec`, `sc`, `taskkill`, `psexec`, `adfind`\
+* `vssadmin`, `wevtutil`, `netsh`, `route`, `arp`, `nslookup`, `ping`, `tracert`, `findstr`, `bcdedit`, etc.\
+\
+---\
+\
+### 3. Non-Trivial Invocation\
+\
+The command must include **at least one** of the following:\
+\
+* **Argument**: `certutil input.txt`\
+* **Switch / flag**: `nltest /domain_trusts`\
+* **Parameter**: `schtasks /create /tn TaskName`\
+* **Pipeline**: `whoami | findstr admin`\
+* **Redirection**: `dir > out.txt`, `echo test >> log.txt`\
+* **Chaining**: `ipconfig /all & whoami`, `net user && net group`, `echo test || exit`\
+\
+#### Chaining Guardrail (explicit)\
+\
+* Operators `&`, `&&`, and `||` are treated equivalently\
+* The **entire chain is preserved verbatim**\
+* **At least one component in the chain must be non-trivial**\
+* Trivial components (`whoami`, `hostname`) may appear alongside non-trivial ones\
+\
+---\
+\
+### 4. Exclusions (Mandatory)\
+\
+DO NOT extract:\
+\
+* Placeholders: `<command>`, `\{payload\}`\
+  *(Allowed: `[REDACTED]`, defanged indicators such as `hxxp://`, `[.]`)*\
+* Bare commands with no arguments/syntax: `whoami`, `ipconfig`\
+* Chains where **no** component is non-trivial: `whoami & hostname`\
+* Commands consisting of a single token (no spaces)\
+\
+---\
+\
+### 5. Preservation Fidelity\
+\
+Preserve **exactly as written**:\
+\
+* **Casing**\
+* **Spacing** (including irregular or multiple spaces)\
+* **Quoting** (single, double, backticks)\
+* **Paths** (relative vs absolute, short vs long)\
+* **Punctuation** \'97 including **semicolons**, slashes, and backslashes\
+\
+No normalization of any kind.\
+\
+---\
+\
+### 6. Wrapper Handling (Strict and Limited)\
+\
+Wrapper stripping applies **ONLY** to `cmd.exe` and `%COMSPEC%`.\
+\
+#### Recognized wrappers\
+\
+* `cmd.exe /c`, `cmd.exe /k`\
+* `cmd /c`, `cmd /k`\
+* `%COMSPEC% /c`, `%COMSPEC% /k`\
+\
+#### Process\
+\
+1. If a recognized wrapper is present, **strip the wrapper prefix only**\
+2. Do **not** parse shell syntax or interpret control flow\
+3. Evaluate **only the post-wrapper substring**\
+4. Post-wrapper command must:\
+\
+   * Start with a recognized Windows execution component\
+   * Satisfy non-trivial invocation rules (\uc0\u8805 1 non-trivial component if chained)\
+5. If post-wrapper command is invalid \uc0\u8594  **exclude entirely**\
+\
+#### Explicit rules\
+\
+* **PowerShell is NEVER stripped**; always preserved verbatim\
+* Shell invocations **without execution flags** are invalid:\
+\
+  * `cmd.exe whoami` \uc0\u8594  INVALID\
+  * `powershell.exe whoami` \uc0\u8594  INVALID\
+\
+---\
+\
+### 7. Context Allowances (Explicit)\
+\
+Valid sources include:\
+\
+* Code blocks and listings\
+* Inline code in prose\
+* Quoted commands in text\
+* Table cells (single line)\
+* **Event logs and telemetry strings**, including delimited records and quoted `CommandLine` fields\
+\
+> A command embedded in logs or telemetry is valid **if the command itself is a complete, single-line, literal substring** requiring no reconstruction.\
+\
+---\
+\
+## Invalid Extraction Criteria\
+\
+Exclude if **ANY** condition applies.\
+\
+---\
+\
+### 1. Physical Line Violations\
+\
+* Multi-line commands\
+* Visually wrapped commands\
+* Continuation characters (`^`, PowerShell backtick)\
+* Any reconstruction required\
+\
+---\
+\
+### 2. Non-Literal Sources\
+\
+* Behavioral descriptions\
+* Summaries\
+* Hypotheticals\
+* Inferred commands\
+* Normalized or altered text\
+\
+---\
+\
+### 3. Insufficient Execution Component\
+\
+* Filename only: `malware.exe`\
+* Tool mentions without syntax\
+* Extension-only references\
+\
+---\
+\
+### 4. Trivial / No Arguments\
+\
+* Bare commands: `whoami`, `hostname`, `nltest`\
+* Post-wrapper bare commands: `cmd.exe /c whoami`\
+* Chains with no non-trivial components\
+* Single-token commands (no spaces)\
+\
+---\
+\
+### 5. Incomplete / Malformed\
+\
+* Truncated commands (`...`)\
+* Placeholder-only commands\
+* Unparseable syntax\
+* **Wildcards that break deterministic copy-paste execution**:\
+\
+  * `dir C:\\Users\\*\\AppData\\*.dat` \uc0\u8594  INVALID\
+  * `del C:\\Windows\\Temp\\*.tmp` \uc0\u8594  VALID\
+\
+---\
+\
+### 6. Uncertainty Cases\
+\
+* Ambiguous line boundaries\
+* Conflicting interpretations\
+* Missing or unclear completeness\
+\
+When in doubt \uc0\u8594  **EXCLUDE**\
+\
+---\
+\
+### 7. Behavioral / Semantic-Only\
+\
+* Capabilities\
+* Tool descriptions\
+* High-level actions\
+* \'93Can run / could use\'94 statements\
+\
+---\
+\
+## Deduplication Rules\
+\
+* Deduplicate **only exact character-for-character matches**\
+* Case variants are distinct\
+* Path variants are distinct\
+* Near-duplicates are preserved\
+\
+---\
+\
+## Decision Framework (Deterministic)\
+\
+A command is **VALID** if and only if **ALL** are true:\
+\
+1. Appears verbatim on ONE physical line\
+2. If wrapped, wrapper is stripped correctly (`cmd.exe` / `%COMSPEC%` only)\
+3. Starts with a recognized Windows execution component (quoting ignored for recognition)\
+4. Contains non-trivial syntax (or \uc0\u8805 1 non-trivial component if chained)\
+5. Contains at least one space\
+6. Preserves exact casing, spacing, quoting, punctuation (including semicolons)\
+7. Requires no inference or reconstruction\
+8. Is complete and copy-pasteable as shown\
+9. Context source is allowed (including logs/telemetry)\
+10. Zero ambiguity about validity\
+\
+If **ANY** check fails \uc0\u8594  **INVALID (Exclude)**\
+\
+---\
+\
+## Examples Matrix (v1.2)\
+\
+| Command                                       | Valid? | Extracted Result                 | Reason                          |\
+| --------------------------------------------- | ------ | -------------------------------- | ------------------------------- |\
+| `cmd.exe /c whoami`                           | \uc0\u10007       | \'96                                | Post-wrapper trivial            |\
+| `whoami`                                      | \uc0\u10007       | \'96                                | No arguments                    |\
+| `ipconfig & whoami`                           | \uc0\u10007       | \'96                                | No non-trivial component        |\
+| `dir > out.txt`                               | \uc0\u10003       | `dir > out.txt`                  | Built-in + redirection          |\
+| `"net.exe" group "domain admins" /dom`        | \uc0\u10003       | preserved                        | Quoting ignored for recognition |\
+| `nltest /domain_trusts`                       | \uc0\u10003       | `nltest /domain_trusts`          | Built-in + flag                 |\
+| `cmd.exe /c ipconfig /all & whoami`           | \uc0\u10003       | `ipconfig /all & whoami`         | \u8805 1 non-trivial component        |\
+| `powershell.exe -NoP -W Hidden`               | \uc0\u10003       | preserved                        | PowerShell verbatim             |\
+| `%COMSPEC% /c net group "domain admins" /dom` | \uc0\u10003       | `net group "domain admins" /dom` | Wrapper stripped                |\
+| `ARGV: ["cmd.exe","/c","whoami"]`             | \uc0\u10007       | \'96                                | Array representation            |\
+}
